@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scan Kamera Absensi Siswa</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:#f2f5fa;color:#17243a;font-family:Arial, sans-serif}
+    main{max-width:650px;margin:auto}.card{background:#fff;border-radius:16px;padding:18px;margin:0 0 15px;box-shadow:0 4px 16px #15233b12}
+    h1{font-size:1.5rem;margin:0 0 8px}h2{font-size:1.1rem;margin:0 0 12px}.intro{background:#17345f;color:#fff;border-radius:16px;padding:20px;margin-bottom:15px}
+    .intro p{margin:0;line-height:1.5;color:#e0eaff}button,input{font:inherit}button{border:0;border-radius:9px;background:#1769d2;color:#fff;padding:11px 14px;margin:4px 4px 4px 0;font-weight:bold;cursor:pointer}
+    button.alt{background:#e5ecf7;color:#18345b}button:disabled{opacity:.5}input{width:100%;padding:12px;border:1px solid #c8d3e3;border-radius:9px;margin:7px 0 10px}
+    #reader{width:100%;max-width:500px;margin:12px auto;overflow:hidden;border-radius:12px}.status{background:#edf1f7;padding:13px;border-radius:10px;line-height:1.45;overflow-wrap:anywhere}.ok{background:#e5f7eb;color:#126331}.err{background:#fff0ee;color:#a52c23}.muted{font-size:.9rem;color:#65748b;line-height:1.5}
+    .details{display:grid;grid-template-columns:95px 1fr;gap:9px;margin-top:12px}.details b{color:#617087}label{font-weight:bold}
+  </style>
+</head>
+<body>
+<main>
+  <header class="intro"><h1>Scan Kamera Absensi Siswa</h1><p>Arahkan kamera ke barcode/QR yang berisi NIS siswa. NIS akan diperiksa ke Google Spreadsheet.</p></header>
+  <section class="card">
+    <h2>1. Kamera pemindai</h2>
+    <p class="muted">Buka halaman melalui HTTPS dan izinkan akses kamera. Jika kamera depan/belakang tersedia, tombol “Ganti kamera” akan berpindah ke kamera berikutnya.</p>
+    <div id="reader"></div>
+    <button id="start">Mulai kamera</button><button id="switch" class="alt">Ganti kamera</button><button id="stop" class="alt">Matikan kamera</button>
+    <div id="cameraStatus" class="status" role="status">Kamera belum dinyalakan.</div>
+  </section>
+  <section class="card">
+    <h2>2. Masukkan NIS manual (jika barcode tidak terbaca)</h2>
+    <form id="nisForm"><label for="nis">NIS siswa</label><input id="nis" inputmode="numeric" autocomplete="off" placeholder="Contoh: 1001" required><button type="submit" id="send">Periksa dan absen</button></form>
+  </section>
+  <section class="card">
+    <h2>3. Hasil scan</h2>
+    <div id="result" class="status" role="status">Belum ada hasil scan.</div>
+    <div id="details" class="details" hidden><b>NIS</b><span id="outNis"></span><b>Nama</b><span id="outName"></span><b>Kelas</b><span id="outClass"></span><b>Tanggal</b><span id="outDate"></span><b>Jam</b><span id="outTime"></span></div>
+  </section>
+</main>
+<script>
+  // GANTI teks ini dengan URL Web App Apps Script yang berakhiran /exec.
+  const API_URL = "TEMPEL_URL_WEB_APP_APPS_SCRIPT_DI_SINI";
+  const $ = id => document.getElementById(id);
+  let scanner = null, cameraList = [], cameraIndex = 0, active = false, busy = false;
+  let previousCode = "", previousAt = 0;
+
+  function show(id, message, type="") {
+    $(id).textContent = message;
+    $(id).className = "status" + (type ? " " + type : "");
+  }
+
+  function api(params) {
+    return new Promise((resolve, reject) => {
+      if (!API_URL.startsWith("https://script.google.com/")) {
+        reject(new Error("URL Apps Script belum dipasang pada konstanta API_URL.")); return;
+      }
+      const callback = "absensiCallback_" + Date.now() + "_" + Math.floor(Math.random()*100000);
+      const script = document.createElement("script");
+      const query = new URLSearchParams({...params, callback});
+      const timer = setTimeout(() => { cleanup(); reject(new Error("Server tidak merespons. Periksa URL dan deployment Apps Script.")); }, 15000);
+      function cleanup(){ clearTimeout(timer); try{delete window[callback]}catch(e){} script.remove(); }
+      window[callback] = data => { cleanup(); if(data && data.ok) resolve(data); else reject(new Error(data?.message || "Permintaan gagal.")); };
+      script.onerror = () => { cleanup(); reject(new Error("Tidak dapat menghubungi Apps Script. Pastikan Web App sudah di-deploy dan memiliki izin akses yang sesuai.")); };
+      script.src = API_URL + (API_URL.includes("?") ? "&" : "?") + query.toString();
+      document.body.appendChild(script);
+    });
+  }
+
+  async function startCamera(){
+    if(!window.Html5Qrcode){show("cameraStatus","Library pemindai gagal dimuat. Periksa koneksi internet.","err");return;}
+    try{
+      if(active) await stopCamera();
+      cameraList = await Html5Qrcode.getCameras();
+      if(!cameraList.length) throw new Error("Kamera tidak ditemukan. Periksa izin kamera pada browser.");
+      cameraIndex = Math.min(cameraIndex, cameraList.length-1);
+      scanner = new Html5Qrcode("reader");
+      const formats = [Html5QrcodeSupportedFormats.QR_CODE,Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.CODE_39,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,Html5QrcodeSupportedFormats.ITF];
+      await scanner.start(cameraList[cameraIndex].id,{fps:10,qrbox:{width:260,height:170},formatsToSupport:formats},text=>readCode(text),()=>{});
+      active = true;
+      show("cameraStatus","Kamera aktif: " + (cameraList[cameraIndex].label || "Kamera " + (cameraIndex+1)),"ok");
+    }catch(error){active=false;show("cameraStatus",error.message || String(error),"err");}
+  }
+
+  async function stopCamera(){
+    if(scanner){try{if(active) await scanner.stop();}catch(e){}try{scanner.clear();}catch(e){}}
+    scanner=null;active=false;
+  }
+
+  async function switchCamera(){
+    if(!cameraList.length){show("cameraStatus","Tekan Mulai kamera terlebih dahulu.","err");return;}
+    const shouldRestart = active;
+    await stopCamera();cameraIndex=(cameraIndex+1)%cameraList.length;
+    if(shouldRestart) await startCamera();
+    else show("cameraStatus","Kamera dipilih: " + (cameraList[cameraIndex].label || "Kamera " + (cameraIndex+1)));
+  }
+
+  async function readCode(raw){
+    const nis=String(raw ?? "").trim();
+    if(!nis || busy) return;
+    const now=Date.now();
+    if(nis===previousCode && now-previousAt<4000) return;
+    previousCode=nis;previousAt=now;$('nis').value=nis;
+    await submitNis(nis,"SCAN KAMERA");
+  }
+
+  async function submitNis(raw, source="INPUT MANUAL"){
+    const nis=String(raw ?? "").trim();
+    if(!nis){show("result","Masukkan atau scan NIS terlebih dahulu.","err");return;}
+    if(busy)return;
+    busy=true;$('send').disabled=true;$('details').hidden=true;
+    show("result","Memeriksa NIS dan mencatat absensi…");
+    try{
+      const data=await api({action:"attend",nis,source});
+      show("result",data.message || "Absensi berhasil dicatat.","ok");
+      $('outNis').textContent=data.student?.nis ?? nis;
+      $('outName').textContent=data.student?.nama ?? "-";
+      $('outClass').textContent=data.student?.kelas ?? "-";
+      $('outDate').textContent=data.date ?? "-";
+      $('outTime').textContent=data.time ?? "-";
+      $('details').hidden=false;
+    }catch(error){show("result",error.message || String(error),"err");}
+    finally{busy=false;$('send').disabled=false;}
+  }
+
+  $('start').addEventListener('click',startCamera);
+  $('switch').addEventListener('click',switchCamera);
+  $('stop').addEventListener('click',async()=>{await stopCamera();show("cameraStatus","Kamera dimatikan.");});
+  $('nisForm').addEventListener('submit',event=>{event.preventDefault();submitNis($('nis').value);});
+  window.addEventListener('beforeunload',()=>{stopCamera();});
+</script>
+</body>
+</html>
