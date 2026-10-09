@@ -1,0 +1,92 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Absensi Barcode Siswa</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #eef3f8;
+  text-align: center;
+  padding: 20px;
+}
+main {
+  max-width: 500px;
+  margin: auto;
+  background: white;
+  padding: 20px;
+  border-radius: 16px;
+}
+button {
+  padding: 12px;
+  margin: 5px;
+  border: 0;
+  border-radius: 8px;
+  background: #1677e8;
+  color: white;
+}
+input {
+  padding: 12px;
+  width: 85%;
+  margin: 8px;
+}
+video {
+  width: 100%;
+  border-radius: 12px;
+  background: black;
+}
+</style>
+</head>
+<body>
+<main>
+<h2>Absensi Barcode Siswa</h2>
+<p>Scan barcode atau masukkan kode siswa.</p>
+
+<video id="video" autoplay playsinline></video>
+<br>
+<button onclick="kamera()">Buka Kamera Belakang</button>
+<button onclick="ganti()">Ganti Kamera</button>
+
+<form id="form">
+<input id="kode" placeholder="Kode barcode siswa" required>
+<button type="submit">Catat Kehadiran</button>
+</form>
+<p id="hasil">Kamera belum aktif.</p>
+</main>
+
+<script>
+let stream;
+let depan = false;
+
+async function kamera() {
+  try {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: depan ? "user" : "environment" },
+      audio: false
+    });
+    document.getElementById("video").srcObject = stream;
+    document.getElementById("hasil").textContent =
+      "Kamera aktif. Scanner barcode perlu diaktifkan.";
+  } catch (e) {
+    document.getElementById("hasil").textContent =
+      "Izinkan akses kamera dan gunakan HTTPS.";
+  }
+}
+
+async function ganti() {
+  depan = !depan;
+  await kamera();
+}
+
+document.getElementById("form").addEventListener("submit", e => {
+  e.preventDefault();
+  document.getElementById("hasil").textContent =
+    "Kode " + document.getElementById("kode").value +
+    " dimasukkan. Spreadsheet belum terhubung.";
+});
+</script>
+</body>
+</html>
