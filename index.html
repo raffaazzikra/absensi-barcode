@@ -2,90 +2,276 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Absensi Barcode Siswa</title>
-<style>
-body {
-  font-family: Arial, sans-serif;
-  background: #eef3f8;
-  text-align: center;
-  padding: 20px;
-}
-main {
-  max-width: 500px;
-  margin: auto;
-  background: white;
-  padding: 20px;
-  border-radius: 16px;
-}
-button {
-  padding: 12px;
-  margin: 5px;
-  border: 0;
-  border-radius: 8px;
-  background: #1677e8;
-  color: white;
-}
-input {
-  padding: 12px;
-  width: 85%;
-  margin: 8px;
-}
-video {
-  width: 100%;
-  border-radius: 12px;
-  background: black;
-}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Absensi Barcode Siswa</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #eef3f8;
+      text-align: center;
+      padding: 16px;
+    }
+    main {
+      max-width: 500px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 16px;
+      box-sizing: border-box;
+    }
+    button {
+      padding: 12px;
+      margin: 5px;
+      border: 0;
+      border-radius: 8px;
+      background: #1677e8;
+      color: white;
+      cursor: pointer;
+    }
+    input {
+      padding: 12px;
+      width: 90%;
+      margin: 8px 0;
+      box-sizing: border-box;
+    }
+    #reader {
+      width: 100%;
+      margin: 12px auto;
+    }
+    #hasil {
+      white-space: pre-line;
+      overflow-wrap: anywhere;
+      padding: 10px;
+      border-radius: 8px;
+      background: #f3f6fa;
+    }
+  </style>
 </head>
 <body>
 <main>
-<h2>Absensi Barcode Siswa</h2>
-<p>Scan barcode atau masukkan kode siswa.</p>
+  <h2>Absensi Barcode Siswa</h2>
+  <p>Arahkan barcode yang berisi NIS ke kamera.</p>
 
-<video id="video" autoplay playsinline></video>
-<br>
-<button onclick="kamera()">Buka Kamera Belakang</button>
-<button onclick="ganti()">Ganti Kamera</button>
+  <div id="reader"></div>
 
-<form id="form">
-<input id="kode" placeholder="Kode barcode siswa" required>
-<button type="submit">Catat Kehadiran</button>
-</form>
-<p id="hasil">Kamera belum aktif.</p>
+  <button type="button" onclick="mulaiKamera()">
+    Buka Kamera
+  </button>
+  <button type="button" onclick="gantiKamera()">
+    Ganti Kamera
+  </button>
+  <button type="button" onclick="berhentiKamera()">
+    Matikan Kamera
+  </button>
+
+  <form id="form">
+    <input id="kode" placeholder="Atau masukkan NIS siswa"
+           autocomplete="off" required>
+    <button type="submit">Catat Kehadiran</button>
+  </form>
+
+  <p id="hasil" role="status">Siap. Tekan Buka Kamera untuk mulai.</p>
 </main>
 
 <script>
-let stream;
-let depan = false;
+const API_URL =
+  "https://script.google.com/macros/s/AKfycbxWCzW65o_0W46CqQqZquT8BC7zWFrwWjUs1MjMxubq_K-7nRV-8Fsx430Mao-74zp3LA/exec";
 
-async function kamera() {
+let scanner = null;
+let kameraList = [];
+let indeksKamera = 0;
+let kameraAktif = false;
+let sedangMemproses = false;
+
+const hasil = document.getElementById("hasil");
+const kodeInput = document.getElementById("kode");
+
+function tampilkan(pesan) {
+  hasil.textContent = pesan;
+}
+
+async function muatKamera() {
+  kameraList = await Html5Qrcode.getCameras();
+
+  if (!kameraList.length) {
+    throw new Error("Kamera tidak ditemukan.");
+  }
+
+  // Utamakan kamera belakang jika label perangkat tersedia.
+  const belakang = kameraList.findIndex(k =>
+    /back|rear|environment|belakang/i.test(k.label)
+  );
+
+  indeksKamera = belakang >= 0 ? belakang : 0;
+}
+
+async function mulaiKamera() {
   try {
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: depan ? "user" : "environment" },
-      audio: false
-    });
-    document.getElementById("video").srcObject = stream;
-    document.getElementById("hasil").textContent =
-      "Kamera aktif. Scanner barcode perlu diaktifkan.";
-  } catch (e) {
-    document.getElementById("hasil").textContent =
-      "Izinkan akses kamera dan gunakan HTTPS.";
+    if (kameraAktif) {
+      await berhentiKamera();
+    }
+
+    if (!window.Html5Qrcode) {
+      throw new Error("Library scanner gagal dimuat. Periksa internet.");
+    }
+
+    if (!kameraList.length) await muatKamera();
+
+    if (!scanner) {
+      scanner = new Html5Qrcode("reader");
+    }
+
+    sedangMemproses = false;
+    const perangkat = kameraList[indeksKamera];
+
+    await scanner.start(
+      perangkat.id,
+      {
+        fps: 10,
+        qrbox: { width: 240, height: 180 }
+      },
+      async (teks) => {
+        if (sedangMemproses) return;
+
+        sedangMemproses = true;
+        const nis = String(teks).trim();
+
+        kodeInput.value = nis;
+        tampilkan("Barcode terbaca. Memeriksa NIS...");
+
+        try {
+          await scanner.stop();
+          kameraAktif = false;
+          await kirimAbsensi(nis, "SCAN KAMERA");
+        } catch (err) {
+          tampilkan("Gagal memproses scan: " + err.message);
+        }
+      },
+      () => {}
+    );
+
+    kameraAktif = true;
+    tampilkan("Kamera aktif: " + (perangkat.label || "Kamera"));
+  } catch (err) {
+    tampilkan(
+      "Kamera gagal dibuka: " + err.message +
+      "\nPastikan izin kamera diizinkan pada browser."
+    );
   }
 }
 
-async function ganti() {
-  depan = !depan;
-  await kamera();
+async function berhentiKamera() {
+  if (scanner && kameraAktif) {
+    await scanner.stop();
+    kameraAktif = false;
+  }
 }
 
-document.getElementById("form").addEventListener("submit", e => {
+async function gantiKamera() {
+  try {
+    if (!kameraList.length) await muatKamera();
+
+    if (kameraList.length < 2) {
+      tampilkan("Perangkat hanya mendeteksi satu kamera.");
+      return;
+    }
+
+    indeksKamera = (indeksKamera + 1) % kameraList.length;
+    await mulaiKamera();
+  } catch (err) {
+    tampilkan("Gagal mengganti kamera: " + err.message);
+  }
+}
+
+function kirimAbsensi(nis, sumber) {
+  return new Promise((resolve, reject) => {
+    if (!nis) {
+      reject(new Error("NIS wajib diisi."));
+      return;
+    }
+
+    tampilkan("Mengirim NIS ke server...");
+
+    const callbackName =
+      "absensiCallback_" + Date.now() + "_" +
+      Math.random().toString(36).slice(2);
+
+    const script = document.createElement("script");
+    const timeout = setTimeout(() => {
+      bersihkan();
+      reject(new Error(
+        "Server tidak merespons. Periksa URL deployment dan akses Apps Script."
+      ));
+    }, 20000);
+
+    function bersihkan() {
+      clearTimeout(timeout);
+      delete window[callbackName];
+      script.remove();
+    }
+
+    window[callbackName] = (data) => {
+      bersihkan();
+
+      if (!data || typeof data.ok !== "boolean") {
+        reject(new Error("Respons server tidak valid."));
+        return;
+      }
+
+      const siswa = data.student || {};
+      const rincian = [
+        data.message || "Tidak ada pesan dari server.",
+        siswa.nis ? "NIS: " + siswa.nis : "",
+        siswa.nama ? "Nama: " + siswa.nama : "",
+        siswa.kelas ? "Kelas: " + siswa.kelas : "",
+        data.date ? "Tanggal: " + data.date : "",
+        data.time ? "Jam: " + data.time : ""
+      ].filter(Boolean).join("\n");
+
+      tampilkan(rincian);
+      sedangMemproses = false;
+      resolve(data);
+    };
+
+    const params = new URLSearchParams({
+      action: "attend",
+      nis: nis,
+      source: sumber,
+      callback: callbackName
+    });
+
+    script.src = API_URL + "?" + params.toString();
+    script.onerror = () => {
+      bersihkan();
+      sedangMemproses = false;
+      reject(new Error("Gagal menghubungi Apps Script."));
+    };
+
+    document.body.appendChild(script);
+  }).catch(err => {
+    sedangMemproses = false;
+    tampilkan("GAGAL: " + err.message);
+    throw err;
+  });
+}
+
+document.getElementById("form").addEventListener("submit", async e => {
   e.preventDefault();
-  document.getElementById("hasil").textContent =
-    "Kode " + document.getElementById("kode").value +
-    " dimasukkan. Spreadsheet belum terhubung.";
+
+  if (sedangMemproses) {
+    tampilkan("Permintaan sebelumnya masih diproses.");
+    return;
+  }
+
+  sedangMemproses = true;
+
+  try {
+    await kirimAbsensi(kodeInput.value.trim(), "INPUT MANUAL");
+  } catch (err) {
+    // Pesan kegagalan ditampilkan oleh kirimAbsensi.
+  }
 });
 </script>
 </body>
