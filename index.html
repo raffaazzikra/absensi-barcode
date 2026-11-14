@@ -40,7 +40,8 @@
   </section>
 </main>
 <script>
-  const API_URL = 'https://script.google.com/macros/s/AKfycbzSx2gxIHxpbi59ZJmTlGKBAvh-dziaEF8ia9CAnweleZ4F2goel4Ws6Ehdh2NhOGuj8Q/exec';
+  const API_URL =
+  new URLSearchParams(window.location.search).get("api") || "";
   const $ = id => document.getElementById(id);
   let scanner=null,cameraList=[],cameraIndex=0,active=false,busy=false,previousCode="",previousAt=0;
   function show(id,message,type=""){ $(id).textContent=message;$(id).className="status"+(type?" "+type:""); }
